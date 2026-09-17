@@ -1,10 +1,22 @@
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
+#include <csignal>
 #include <string>
 #include <chrono>
 #include <thread>
 #include <iostream>
+ 
+static volatile std::sig_atomic_t g_stopRequested = 0;
+ 
+static BOOL WINAPI consoleHandler(DWORD signal)
+{
+    if (signal == CTRL_C_EVENT || signal == CTRL_BREAK_EVENT || signal == CTRL_CLOSE_EVENT) {
+        g_stopRequested = 1;
+        return TRUE;
+    }
+    return FALSE;
+}
  
 static void enableDpiAwareness()
 {
@@ -64,7 +76,7 @@ struct ScreenCapture {
         return true;
     }
  
-    // CAPTUREBLT is needed 
+    // CAPTUREBLT needed to include layered/transparent windows.
     void grab()
     {
         BitBlt(memDC, 0, 0, width, height,
@@ -72,6 +84,8 @@ struct ScreenCapture {
         drawCursor();
     }
  
+    // BitBlt never includes the pointer it lives in separate hardware
+    // layer — so composite it in manually.
     void drawCursor()
     {
         CURSORINFO ci{};
@@ -101,7 +115,8 @@ struct ScreenCapture {
         if (screenDC) ReleaseDC(nullptr, screenDC);
     }
 };
- 
+
+// ffmpeg pipe
 
 static FILE* openEncoder(const std::string& outFile, int w, int h, int fps)
 {
@@ -121,17 +136,15 @@ static FILE* openEncoder(const std::string& outFile, int w, int h, int fps)
  
 int main(int argc, char** argv)
 {
+    // Hardcoded for now, per current requirements.
+    constexpr int fps     = 30;
+    constexpr int seconds = 60;
+ 
     enableDpiAwareness();
+    SetConsoleCtrlHandler(consoleHandler, TRUE);
  
     const std::string outFile = (argc > 1) ? argv[1] : "out.mp4";
-    const int fps             = (argc > 2) ? std::atoi(argv[2]) : 30;
-    const int seconds         = (argc > 3) ? std::atoi(argv[3]) : 0;  // 0 = until Esc
-    const bool allMonitors    = (argc > 4) && std::strcmp(argv[4], "all") == 0;
- 
-    if (fps < 1 || fps > 240) {
-        std::cerr << "fps must be between 1 and 240\n";
-        return 1;
-    }
+    const bool allMonitors    = (argc > 2) && std::strcmp(argv[2], "all") == 0;
  
     ScreenCapture cap;
     if (!cap.init(allMonitors)) {
@@ -146,11 +159,14 @@ int main(int argc, char** argv)
         return 1;
     }
  
+    // Default timer resolution is ~15.6 ms, which makes a 30 fps schedule
+    // impossible to hit. Raise it for the duration of the recording.
     timeBeginPeriod(1);
  
     std::cout << "Recording " << cap.width << "x" << cap.height
-              << " @ " << fps << " fps -> " << outFile << "\n"
-              << "Press Esc to stop.\n";
+              << " @ " << fps << " fps -> " << outFile
+              << " (auto-stop after " << seconds << "s)\n"
+              << "Press Esc or Ctrl+C to stop early.\n";
  
     using clock = std::chrono::steady_clock;
     const auto framePeriod =
@@ -162,8 +178,9 @@ int main(int argc, char** argv)
     bool       writeFailed = false;
  
     for (;;) {
+        if (g_stopRequested) break;
         if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) break;
-        if (seconds > 0 && clock::now() - started >= std::chrono::seconds(seconds)) break;
+        if (clock::now() - started >= std::chrono::seconds(seconds)) break;
  
         cap.grab();
  
