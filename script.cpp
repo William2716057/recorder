@@ -7,6 +7,7 @@
 #include <thread>
 #include <iostream>
  
+
 static volatile std::sig_atomic_t g_stopRequested = 0;
  
 static BOOL WINAPI consoleHandler(DWORD signal)
@@ -30,7 +31,6 @@ static void enableDpiAwareness()
     }
     SetProcessDPIAware();
 }
- 
 
 struct ScreenCapture {
     HDC     screenDC = nullptr;
@@ -76,7 +76,7 @@ struct ScreenCapture {
         return true;
     }
  
-    // CAPTUREBLT needed to include layered/transparent windows.
+
     void grab()
     {
         BitBlt(memDC, 0, 0, width, height,
@@ -84,8 +84,6 @@ struct ScreenCapture {
         drawCursor();
     }
  
-    // BitBlt never includes the pointer it lives in separate hardware
-    // layer — so composite it in manually.
     void drawCursor()
     {
         CURSORINFO ci{};
@@ -116,8 +114,6 @@ struct ScreenCapture {
     }
 };
 
-// ffmpeg pipe
-
 static FILE* openEncoder(const std::string& outFile, int w, int h, int fps)
 {
     std::string cmd =
@@ -133,11 +129,11 @@ static FILE* openEncoder(const std::string& outFile, int w, int h, int fps)
  
     return _popen(cmd.c_str(), "wb");
 }
- 
+
 int main(int argc, char** argv)
 {
     // Hardcoded for now, per current requirements.
-    constexpr int fps     = 30;
+    constexpr int fps     = 60;
     constexpr int seconds = 60;
  
     enableDpiAwareness();
@@ -158,9 +154,7 @@ int main(int argc, char** argv)
         std::cerr << "Could not start ffmpeg. Is it on PATH?\n";
         return 1;
     }
- 
-    // Default timer resolution is ~15.6 ms, which makes a 30 fps schedule
-    // impossible to hit. Raise it for the duration of the recording.
+
     timeBeginPeriod(1);
  
     std::cout << "Recording " << cap.width << "x" << cap.height
@@ -177,18 +171,27 @@ int main(int argc, char** argv)
     long long  frames = 0, late = 0;
     bool       writeFailed = false;
  
+    //framerate output.
+    long long targetFrames = 0;
+ 
     for (;;) {
         if (g_stopRequested) break;
         if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) break;
-        if (clock::now() - started >= std::chrono::seconds(seconds)) break;
+        const double elapsed =
+            std::chrono::duration<double>(clock::now() - started).count();
+        if (elapsed >= seconds) break;
  
         cap.grab();
  
-        if (fwrite(cap.pixels, 1, cap.frameBytes(), enc) != cap.frameBytes()) {
-            writeFailed = true;   // ffmpeg died or the pipe closed
-            break;
+        targetFrames = static_cast<long long>(elapsed * fps) + 1;
+        while (frames < targetFrames) {
+            if (fwrite(cap.pixels, 1, cap.frameBytes(), enc) != cap.frameBytes()) {
+                writeFailed = true;
+                break;
+            }
+            ++frames;
         }
-        ++frames;
+        if (writeFailed) break;
  
         deadline += framePeriod;
         const auto now = clock::now();
