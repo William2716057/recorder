@@ -6,7 +6,8 @@
 #include <chrono>
 #include <thread>
 #include <iostream>
- 
+
+//g++ -std=c++17 script.cpp -o record.exe -lgdi32 -lwinmm
 
 static volatile std::sig_atomic_t g_stopRequested = 0;
  
@@ -50,7 +51,7 @@ struct ScreenCapture {
             height  = GetSystemMetrics(SM_CYVIRTUALSCREEN);
         } else {
             originX = originY = 0;
-            width   = GetSystemMetrics(SM_CXSCREEN);
+            width   = GetSystemMetrics(SM_CXSCREEN); 
             height  = GetSystemMetrics(SM_CYSCREEN);
         }
         if (width <= 0 || height <= 0) return false;
@@ -132,14 +133,14 @@ static FILE* openEncoder(const std::string& outFile, int w, int h, int fps)
 
 int main(int argc, char** argv)
 {
-    // Hardcoded for now, per current requirements.
+    // adjust here
     constexpr int fps     = 60;
     constexpr int seconds = 60;
  
     enableDpiAwareness();
     SetConsoleCtrlHandler(consoleHandler, TRUE);
  
-    const std::string outFile = (argc > 1) ? argv[1] : "out.mp4";
+    const std::string outFile = (argc > 1) ? argv[1] : "out.mp4"; //change to user input
     const bool allMonitors    = (argc > 2) && std::strcmp(argv[2], "all") == 0;
  
     ScreenCapture cap;
@@ -156,7 +157,7 @@ int main(int argc, char** argv)
     }
 
     timeBeginPeriod(1);
- 
+
     std::cout << "Recording " << cap.width << "x" << cap.height
               << " @ " << fps << " fps -> " << outFile
               << " (auto-stop after " << seconds << "s)\n"
